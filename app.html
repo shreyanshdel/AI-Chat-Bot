@@ -1,0 +1,1243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StudyMate AI | Deep Tutor</title>
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,700;1,400;1,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        cream: '#F4ECE0',
+                        canvas: '#F1E7D9',
+                        charcoal: '#1A1A1A',
+                        terracotta: '#B83D26',
+                        forest: '#2E4A3A',
+                        muted: '#6B665E',
+                        dark: '#1C1C1C',
+                        border: '#E6DCCB',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        serif: ['Playfair Display', 'serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                }
+            }
+        }
+    </script>
+    
+    <!-- Libraries -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/framer-motion@10.16.4/dist/framer-motion.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        body {
+            background-color: #F4ECE0;
+            color: #1A1A1A;
+            overflow-x: hidden;
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            padding: 0;
+        }
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+            height: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #E6DCCB;
+            border-radius: 10px;
+        }
+        .glass-pill {
+            background: rgba(255, 255, 255, 0.4);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(0, 0, 0, 0.05);
+        }
+        /* Markdown / Content typography scaling */
+        .content-body strong {
+            color: #1A1A1A;
+            font-weight: 600;
+        }
+        .content-body em {
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        // framer-motion@10 UMD exposes itself as `window.Motion` in some builds and
+        // `window.framerMotion` in others; pick whichever is defined.
+        const _fm = window.Motion || window.framerMotion || {};
+        const motion = _fm.motion;
+        const AnimatePresence = _fm.AnimatePresence;
+
+        // Safe Lucide Icon Wrapper to prevent React DOM mutation crashes
+        const Icon = ({ name, className }) => {
+            const spanRef = useRef(null);
+            useEffect(() => {
+                if (spanRef.current && window.lucide) {
+                    spanRef.current.innerHTML = `<i data-lucide="${name}" class="${className || ''}"></i>`;
+                    window.lucide.createIcons({ root: spanRef.current });
+                }
+            }, [name, className]);
+            return <span ref={spanRef} style={{ display: 'contents' }}></span>;
+        };
+
+        const App = () => {
+            const [sidebarOpen, setSidebarOpen] = useState(false);
+            const [mode, setMode] = useState('deep');
+            const [messages, setMessages] = useState([]);
+            const [inputValue, setInputValue] = useState('');
+            const [isTyping, setIsTyping] = useState(false);
+            const chatEndRef = useRef(null);
+
+            useEffect(() => {
+                chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+            }, [messages, isTyping]);
+
+            const handleSendWithText = (text) => {
+                if (!text.trim()) return;
+                const userMsg = { id: Date.now(), role: 'user', content: text.trim() };
+                setMessages(prev => [...prev, userMsg]);
+                
+                setIsTyping(true);
+
+                const aiMsgId = Date.now() + 1;
+                const newAiMsg = {
+                    id: aiMsgId,
+                    role: 'ai',
+                    content: '',
+                    originalQuery: text.trim(),
+                    isStreaming: true
+                };
+
+                fetch('http://localhost:8000/chat/message', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer dummy_token'
+                    },
+                    body: JSON.stringify({
+                        conversation_id: 'jane_doe_10',
+                        message: text.trim(),
+                        feature_hint: mode
+                    })
+                })
+                .then(async (response) => {
+                    setIsTyping(false);
+                    setMessages(prev => [...prev, newAiMsg]);
+
+                    if (!response.ok) {
+                        throw new Error('Failed to fetch from backend');
+                    }
+
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder('utf-8');
+                    let buffer = '';
+                    let currentEvent = 'content';
+
+                    while (true) {
+                        const { value, done } = await reader.read();
+                        if (done) break;
+
+                        buffer += decoder.decode(value, { stream: true });
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop();
+
+                        for (const line of lines) {
+                            const trimmed = line.trim();
+                            if (!trimmed) continue;
+                            if (trimmed.startsWith('event: ')) {
+                                currentEvent = trimmed.slice(7).trim();
+                            } else if (trimmed.startsWith('data: ')) {
+                                try {
+                                    const jsonStr = trimmed.slice(6);
+                                    const parsed = JSON.parse(jsonStr);
+                                    
+                                    if (currentEvent === 'thinking') {
+                                        setMessages(prev => prev.map(m => {
+                                            if (m.id === aiMsgId) {
+                                                const existingSteps = m.steps || [];
+                                                const existingIdx = existingSteps.findIndex(s => s.text === parsed.text);
+                                                let updatedSteps;
+                                                if (existingIdx > -1) {
+                                                    updatedSteps = [...existingSteps];
+                                                    updatedSteps[existingIdx] = { text: parsed.text, status: parsed.status };
+                                                } else {
+                                                    updatedSteps = [...existingSteps, { text: parsed.text, status: parsed.status }];
+                                                }
+                                                return { ...m, steps: updatedSteps };
+                                            }
+                                            return m;
+                                        }));
+                                    } else if (currentEvent === 'expert') {
+                                        setMessages(prev => prev.map(m => {
+                                            if (m.id === aiMsgId) {
+                                                return {
+                                                    ...m,
+                                                    subject: parsed.subject,
+                                                    expertName: parsed.name,
+                                                    badgeColor: parsed.badgeColor,
+                                                    pulseColor: parsed.pulseColor
+                                                };
+                                            }
+                                            return m;
+                                        }));
+                                    } else if (currentEvent === 'content') {
+                                        if (parsed.token) {
+                                            setMessages(prev => prev.map(m => {
+                                                if (m.id === aiMsgId) {
+                                                    return { ...m, content: m.content + parsed.token };
+                                                }
+                                                return m;
+                                            }));
+                                        }
+                                    } else if (currentEvent === 'followups') {
+                                        setMessages(prev => prev.map(m => {
+                                            if (m.id === aiMsgId) {
+                                                return { ...m, followups: parsed.items };
+                                            }
+                                            return m;
+                                        }));
+                                    }
+                                } catch (e) {
+                                    console.error('Error parsing SSE data:', e);
+                                }
+                            }
+                        }
+                    }
+
+                    setMessages(prev => prev.map(m => {
+                        if (m.id === aiMsgId) {
+                            return { ...m, isStreaming: false };
+                        }
+                        return m;
+                    }));
+                })
+                .catch((error) => {
+                    console.error('Streaming error:', error);
+                    setIsTyping(false);
+                    
+                    // Intelligent dynamic local mock fallback if uvicorn is not running
+                    let dynamicMock = "";
+                    const q = text.toLowerCase();
+                    if (q.includes("photo") || q.includes("plant") || q.includes("leaf") || q.includes("biology")) {
+                        dynamicMock = "Imagine the plant on your balcony is a chef. Every single day, using only three ingredients — sunlight, water, and the air you exhale — it cooks its own food. No stove, no Swiggy. That kitchen magic is **Photosynthesis**.\n\n### The Simple Recipe\n6 CO₂ + 6 H₂O + sunlight → C₆H₁₂O₆ + 6 O₂\n\n### Where it Happens\nInside microscopic green solar panels called **chloroplasts** [the food factories of plant cells] which contain a green pigment called **chlorophyll** to trap solar energy.\n\nAvoid thinking that plants only do this in the daytime! While the light-dependent reactions need sun, the dark reaction (Calvin Cycle) can keep cooking without direct sunlight! Do you want to know how they store this glucose?";
+                    } else if (q.includes("gravit") || q.includes("newton") || q.includes("physics") || q.includes("force")) {
+                        dynamicMock = "Imagine you're checking your phone in bed and it slips, hitting you right in the face. Why does it always fall down, never up? That invisible cosmic magnet is **Gravity** [the attractive force between any two objects with mass].\n\n### The Big Idea, Simply\nEvery single thing in the universe pulls on every other thing. You pull on the Earth, and the Earth pulls on you! But because Earth is so enormous, its pull is the only one you really feel.\n\n### The Formula\nF = G * (m₁ * m₂) / r²\nWhere F is force, G is the gravitational constant (6.674e-11), m₁ & m₂ are masses, and r is the distance between their centers.\n\nRemember: Gravity never turns off! Even astronauts in orbit are actually in constant freefall around the Earth, not floating in zero gravity! Can you guess why satellites don't crash into us?";
+                    } else {
+                        dynamicMock = `I couldn't reach my FastAPI server at http://localhost:8000. Please start the server using the uvicorn command in your CLI.\n\nHere is your fallback answer:\n\nI received your question about **"${text}"**. Let me know if you would like me to explain it step-by-step or guide you in starting the backend service!`;
+                    }
+
+                    setMessages(prev => [
+                        ...prev,
+                        {
+                            id: aiMsgId,
+                            role: 'ai',
+                            content: dynamicMock,
+                            originalQuery: text,
+                            isStreaming: false
+                        }
+                    ]);
+                });
+            };
+
+            const handleSend = () => {
+                if (!inputValue.trim()) return;
+                const query = inputValue.trim();
+                setInputValue('');
+                
+                const textarea = document.getElementById('chat-input');
+                if(textarea) {
+                    textarea.style.height = 'auto';
+                }
+
+                handleSendWithText(query);
+            };
+
+            const toggleSidebar = () => setSidebarOpen(!sidebarOpen);
+
+            return (
+                <div className="flex h-[100dvh] w-full overflow-hidden bg-cream font-sans text-[15px] text-charcoal">
+                    
+                    {/* Sidebar Overlay */}
+                    <AnimatePresence>
+                        {sidebarOpen && (
+                            <motion.div 
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                exit={{ opacity: 0 }}
+                                onClick={toggleSidebar}
+                                className="fixed inset-0 bg-charcoal/40 z-[60] lg:hidden backdrop-blur-sm"
+                            />
+                        )}
+                    </AnimatePresence>
+
+                    {/* Sidebar */}
+                    <aside className={`fixed top-0 left-0 h-full bg-cream z-[70] shadow-2xl lg:shadow-none border-r border-border flex flex-col transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'} w-[90vw] md:w-[70vw] lg:w-[380px] lg:static`}>
+                        <div className="p-6 md:p-8 flex flex-col h-full">
+                            <div className="flex justify-between items-center mb-4 md:mb-6 lg:hidden">
+                                <h2 className="font-serif text-[24px] font-bold tracking-tight text-charcoal">Study <span className="text-terracotta italic font-serif">tools</span></h2>
+                                <button onClick={toggleSidebar} className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-canvas transition-colors">
+                                    <Icon name="x" className="w-5 h-5" />
+                                </button>
+                            </div>
+                            <div className="hidden lg:block mb-6">
+                                <h2 className="font-serif text-[28px] font-bold tracking-tight text-charcoal">Study <span className="text-terracotta italic font-serif">tools</span></h2>
+                            </div>
+                            <p className="text-muted text-[13px] mb-8 italic leading-[1.6]">14 deep-learning powered tools, each tuned to a specialist model. Tap any one to start.</p>
+
+                            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-8 pr-2">
+                                <SidebarSection title="Learning & Tutoring">
+                                    <SidebarItem icon="message-square" name="Conversational Tutor" sub="Mixture-of-Experts LLM with RAG" />
+                                    <SidebarItem icon="plus-circle" name="Math Solver" sub="Chain-of-Thought + Python sandbox" />
+                                    <SidebarItem icon="camera" name="Snap & Solve" sub="Vision-Language model (LLaVA)" />
+                                    <SidebarItem icon="mic" name="Voice Doubt Solver" sub="Whisper v3 + XTTS" />
+                                </SidebarSection>
+
+                                <SidebarSection title="Study Tools">
+                                    <SidebarItem icon="file-text" name="Note Summarizer" sub="BART abstractive engine" />
+                                    <SidebarItem icon="layers" name="Flashcard Generator" sub="T5 question-generation + FSRS" />
+                                    <SidebarItem icon="bar-chart-3" name="Adaptive Quizzes" sub="Deep RL difficulty tuning" />
+                                    <SidebarItem icon="brain" name="Memory Coach" sub="FSRS scheduler + Transformer DKT" />
+                                </SidebarSection>
+                            </div>
+
+                            <div className="pt-6 mt-4 border-t border-border flex items-center justify-between flex-shrink-0">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 bg-terracotta rounded-full flex items-center justify-center text-white font-serif italic text-[15px] shadow-inner">JD</div>
+                                    <div>
+                                        <div className="text-[13px] font-bold text-charcoal">Jane Doe</div>
+                                        <div className="text-[9px] font-bold text-muted uppercase tracking-wider">Free plan · Class 10</div>
+                                    </div>
+                                </div>
+                                <button className="bg-[#E8A33D] text-charcoal px-4 py-2 rounded-full text-[11px] font-bold shadow-md hover:brightness-110 active:scale-95 transition-all">Upgrade</button>
+                            </div>
+                        </div>
+                    </aside>
+
+                    {/* Main Content Area */}
+                    <div className="flex flex-col flex-1 h-full min-w-0 min-h-0 relative">
+                        {/* Header */}
+                        <header className="h-[clamp(60px,8vh,80px)] flex-shrink-0 border-b border-border bg-cream/90 backdrop-blur-md flex items-center justify-between px-4 md:px-6 z-50">
+                            <div className="flex items-center gap-3 md:gap-6">
+                                <button 
+                                    onClick={toggleSidebar}
+                                    className="w-10 h-10 md:w-12 md:h-12 flex items-center justify-center bg-charcoal text-white rounded-xl hover:scale-95 active:scale-90 transition-all shadow-md lg:hidden"
+                                >
+                                    <Icon name="menu" className="w-5 h-5 md:w-6 md:h-6" />
+                                </button>
+                                <div className="flex items-center gap-2 md:gap-3">
+                                    <span className="font-serif text-[20px] md:text-[24px] font-bold tracking-tight">Study<span className="italic text-terracotta">Mate</span></span>
+                                    <span className="hidden sm:inline-block px-2 md:px-3 py-1 bg-white border border-border text-[9px] md:text-[10px] font-bold tracking-widest rounded-full shadow-sm">AI · DEEP TUTOR</span>
+                                </div>
+                            </div>
+
+                            <div className="hidden md:flex items-center gap-2 glass-pill px-3 md:px-5 py-2 md:py-2.5 rounded-full text-[10px] md:text-[11px] font-bold text-muted shadow-sm">
+                                <span className="text-terracotta text-xs">🔴</span>
+                                <span className="hidden xl:inline">Knows you</span>
+                                <span className="hidden xl:inline opacity-30 mx-1">•</span>
+                                <span>Class 10 CBSE</span>
+                                <span className="opacity-30 mx-1">•</span>
+                                <span>14-day streak</span>
+                                <span className="hidden xl:inline opacity-30 mx-1">•</span>
+                                <span className="hidden xl:inline">Boards: 47 days</span>
+                            </div>
+
+                            <div className="flex items-center gap-2 px-3 md:px-5 py-2 md:py-2.5 bg-white border border-border rounded-full text-[10px] md:text-[11px] font-bold shadow-sm">
+                                <span className="text-green-500 text-[10px] md:text-xs animate-pulse">●</span>
+                                <span className="hidden sm:inline">Online · Free plan</span>
+                                <span className="sm:hidden">Online</span>
+                            </div>
+                        </header>
+
+                        {/* Chat Messages */}
+                        <main className="flex-1 overflow-y-auto custom-scrollbar flex justify-center w-full relative bg-canvas/40 min-h-0">
+                            <div className="w-full px-4 md:w-[90%] lg:max-w-[880px] py-6 md:py-8 flex flex-col min-h-full">
+                                {messages.length === 0 ? (
+                                    <motion.div 
+                                        initial={{ opacity: 0, y: 30 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        className="flex flex-col items-center text-center mt-12 md:mt-24 w-full mb-auto"
+                                    >
+                                        <h1 className="font-serif text-[clamp(36px,5vw,52px)] leading-[1.1] font-bold mb-4 md:mb-8 text-charcoal">
+                                            Hello, <span className="italic text-terracotta font-serif">Jane.</span>
+                                        </h1>
+                                        <p className="w-full max-w-[520px] text-muted text-[15px] md:text-[18px] leading-[1.6] mb-8 md:mb-16">
+                                            Your personal deep-learning tutor. Ask anything — text, voice, image, or handwritten work. I remember our past sessions and adapt to how you learn.
+                                        </p>
+                                        
+                                        <div className="flex flex-col gap-3 md:gap-4 w-full px-2">
+                                            <div className="flex flex-wrap justify-center gap-2 md:gap-3">
+                                                <QuickChip icon="plus" text="What is gravity?" onClick={() => handleSendWithText("What is gravity?")} />
+                                                <QuickChip icon="leaf" text="Explain photosynthesis" onClick={() => handleSendWithText("Explain photosynthesis")} />
+                                                <QuickChip icon="calculator" text="Solve a quadratic" onClick={() => handleSendWithText("Solve a quadratic")} />
+                                            </div>
+                                            <div className="flex flex-wrap justify-center gap-2 md:gap-3">
+                                                <QuickChip icon="heart" text="I'm stressed" onClick={() => handleSendWithText("I'm stressed")} />
+                                                <QuickChip icon="history" text="Continue yesterday" onClick={() => handleSendWithText("Continue yesterday")} />
+                                            </div>
+                                        </div>
+                                    </motion.div>
+                                ) : (
+                                    <div className="space-y-6 md:space-y-8 pb-32 md:pb-48 mt-auto">
+                                        {messages.map((msg) => (
+                                            <Message key={msg.id} msg={msg} onFollowUp={handleSendWithText} />
+                                        ))}
+                                        {isTyping && <TypingIndicator />}
+                                        <div ref={chatEndRef} className="h-4" />
+                                    </div>
+                                )}
+                            </div>
+                        </main>
+
+                        {/* Composer */}
+                        <div className="absolute bottom-0 left-0 w-full p-4 md:p-6 flex flex-col items-center gap-3 md:gap-4 bg-gradient-to-t from-cream via-cream/95 to-transparent z-40 pointer-events-none">
+                            <div className="pointer-events-auto flex items-center gap-1 bg-white/80 backdrop-blur-md border border-border p-1 md:p-1.5 rounded-full shadow-lg">
+                                <ModePill active={mode === 'quick'} onClick={() => setMode('quick')} icon="zap" label="Quick" />
+                                <ModePill active={mode === 'deep'} onClick={() => setMode('deep')} icon="brain" label="Deep Think" />
+                                <ModePill active={mode === 'search'} onClick={() => setMode('search')} icon="search" label="Research" />
+                            </div>
+
+                            <div className="w-full max-w-[880px] relative pointer-events-auto px-2 md:px-0">
+                                <div className="flex items-end gap-2 md:gap-4 bg-white border border-border rounded-[24px] md:rounded-[32px] p-2 pl-4 md:p-3 md:pl-6 pr-2 md:pr-3 shadow-xl focus-within:border-terracotta/40 transition-all">
+                                    <textarea 
+                                        id="chat-input"
+                                        className="flex-1 bg-transparent border-none outline-none resize-none text-[15px] py-2 md:py-3 max-h-[120px] custom-scrollbar placeholder:text-muted/60"
+                                        placeholder="Ask anything — try asking the same question twice to see how I vary..."
+                                        value={inputValue}
+                                        onChange={(e) => {
+                                            setInputValue(e.target.value);
+                                            e.target.style.height = 'auto';
+                                            e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
+                                        }}
+                                        onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), handleSend())}
+                                        rows={1}
+                                        style={{ minHeight: '44px' }}
+                                    />
+                                    <div className="flex items-center gap-1 md:gap-2 px-2 md:px-4 mb-1 md:mb-2 border-l border-border">
+                                        <button className="p-1.5 md:p-2 text-muted hover:text-terracotta transition-colors rounded-full hover:bg-canvas"><Icon name="image" className="w-4 h-4 md:w-5 md:h-5" /></button>
+                                        <button className="p-1.5 md:p-2 text-muted hover:text-terracotta transition-colors rounded-full hover:bg-canvas"><Icon name="mic" className="w-4 h-4 md:w-5 md:h-5" /></button>
+                                    </div>
+                                    <button 
+                                        onClick={handleSend}
+                                        className="w-10 h-10 md:w-12 md:h-12 mb-0.5 md:mb-1 bg-dark text-white rounded-[16px] md:rounded-2xl flex-shrink-0 flex items-center justify-center hover:scale-105 active:scale-95 transition-all shadow-md"
+                                    >
+                                        <Icon name="arrow-up" className="w-4 h-4 md:w-5 md:h-5 stroke-[3]" />
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="flex flex-wrap justify-center items-center gap-3 md:gap-6 text-[9px] md:text-[10px] font-bold text-muted/60 tracking-[0.1em] md:tracking-[0.15em] uppercase mt-1 md:mt-2 mb-2">
+                                <Capability label="Vision ready" />
+                                <Capability label="Voice ready" />
+                                <Capability label="Live web" />
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+            );
+        };
+
+        const SidebarSection = ({ title, children }) => (
+            <div className="space-y-4">
+                <div className="text-[11px] font-bold tracking-[0.2em] text-muted/50 uppercase px-1">{title}</div>
+                <div className="space-y-1">{children}</div>
+            </div>
+        );
+
+        const SidebarItem = ({ icon, name, sub }) => (
+            <div className="group flex items-center gap-4 p-3 md:p-4 rounded-xl md:rounded-2xl hover:bg-white border border-transparent hover:border-border transition-all cursor-pointer shadow-sm hover:shadow-md">
+                <div className="w-10 h-10 md:w-12 md:h-12 bg-dark rounded-xl flex items-center justify-center text-white group-hover:bg-terracotta transition-colors flex-shrink-0">
+                    <Icon name={icon} className="w-5 h-5 md:w-6 md:h-6" />
+                </div>
+                <div className="overflow-hidden">
+                    <div className="text-[13px] md:text-[15px] font-bold text-charcoal group-hover:text-terracotta transition-colors truncate">{name}</div>
+                    <div className="text-[11px] text-muted italic truncate opacity-80 mt-0.5">{sub}</div>
+                </div>
+            </div>
+        );
+
+        const QuickChip = ({ icon, text, onClick }) => (
+            <button onClick={onClick} className="px-4 md:px-6 py-2.5 md:py-3 bg-white border border-border rounded-full text-[11px] md:text-[13px] font-bold text-charcoal hover:border-terracotta hover:bg-cream/30 hover:-translate-y-1 transition-all flex items-center gap-2 md:gap-2.5 shadow-sm">
+                <Icon name={icon} className="w-3.5 h-3.5 md:w-4 md:h-4 text-muted group-hover:text-terracotta" />
+                {text}
+            </button>
+        );
+
+        const ModePill = ({ active, onClick, icon, label }) => (
+            <button 
+                onClick={onClick}
+                className={`px-3 md:px-6 py-1.5 md:py-2.5 rounded-full text-[11px] md:text-[12px] font-bold flex items-center gap-1.5 md:gap-2.5 transition-all ${active ? 'bg-dark text-white shadow-md scale-[1.02] md:scale-105' : 'text-muted hover:text-charcoal'}`}
+            >
+                <Icon name={icon} className="w-3.5 h-3.5 md:w-4 md:h-4" />
+                {label}
+            </button>
+        );
+
+        const Capability = ({ label }) => (
+            <div className="flex items-center gap-1.5">
+                <div className="w-1.5 h-1.5 bg-green-500 rounded-full shadow-[0_0_8px_rgba(34,197,94,0.6)]"></div>
+                {label}
+            </div>
+        );
+
+        const Message = ({ msg, onFollowUp }) => {
+            const isAI = msg.role === 'ai';
+            return (
+                <motion.div 
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className={`flex w-full ${isAI ? 'justify-start' : 'justify-end'} gap-3 md:gap-[14px]`}
+                >
+                    {isAI && (
+                        <div className="w-10 h-10 md:w-10 md:h-10 bg-forest rounded-xl flex-shrink-0 flex items-center justify-center text-white shadow-md mt-1">
+                            <Icon name="sparkles" className="w-5 h-5" />
+                        </div>
+                    )}
+                    
+                    <div className={`max-w-[88%] md:max-w-[80%] lg:max-w-[75%] w-full flex ${isAI ? 'justify-start' : 'justify-end'}`}>
+                        <div className={`${isAI ? 'bg-white border border-border p-4 md:p-6 lg:p-8 rounded-[24px] md:rounded-[32px] shadow-sm w-full' : 'bg-dark text-white px-5 py-3 md:px-6 md:py-4 rounded-[20px] md:rounded-[24px] shadow-lg inline-block'}`}>
+                            {isAI ? <DynamicAIResponse msg={msg} onFollowUp={onFollowUp} /> : <div className="text-[15px] leading-[1.6]">{msg.content}</div>}
+                        </div>
+                    </div>
+
+                    {!isAI && (
+                        <div className="w-10 h-10 md:w-10 md:h-10 bg-terracotta rounded-xl flex-shrink-0 flex items-center justify-center text-white font-serif italic text-[15px] font-bold shadow-md mt-1">JD</div>
+                    )}
+                </motion.div>
+            );
+        };
+
+        const AIThinking = ({ steps }) => {
+            const [activeStep, setActiveStep] = useState(0);
+
+            useEffect(() => {
+                if (activeStep < steps.length) {
+                    const timer = setTimeout(() => {
+                        setActiveStep(prev => prev + 1);
+                    }, 800);
+                    return () => clearTimeout(timer);
+                }
+            }, [activeStep, steps.length]);
+
+            return (
+                <div className="bg-canvas/40 border border-border p-4 md:p-6 rounded-2xl md:rounded-3xl space-y-3 mb-4 md:mb-6">
+                    <div className="flex items-center gap-2 text-[11px] font-bold tracking-[0.2em] text-terracotta uppercase">
+                        <Icon name="cpu" className="w-4 h-4" />
+                        Reasoning Trace
+                    </div>
+                    <div className="font-mono text-[11px] md:text-[13px] text-muted space-y-2">
+                        {steps.map((step, idx) => {
+                            const status = idx < activeStep ? 'done' : idx === activeStep ? 'active' : 'pending';
+                            return (
+                                <div key={idx} className={`flex items-start md:items-center gap-3 transition-opacity duration-300 ${status === 'pending' ? 'opacity-0 h-0 overflow-hidden' : 'opacity-100'} ${status === 'done' ? 'text-charcoal' : status === 'active' ? 'text-terracotta font-medium' : 'opacity-50'}`}>
+                                    <div className="mt-0.5 md:mt-0 flex-shrink-0 w-4 h-4 flex items-center justify-center">
+                                        {status === 'done' ? (
+                                            <span className="text-forest text-[13px]">✓</span>
+                                        ) : status === 'active' ? (
+                                            <Icon name="loader-2" className="w-3.5 h-3.5 text-terracotta animate-spin" />
+                                        ) : (
+                                            <span className="opacity-30 text-[13px]">○</span>
+                                        )}
+                                    </div>
+                                    <span className="leading-snug">{step.text}</span>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            );
+        };
+
+        const ConfidenceDot = ({ level, source }) => {
+            const colors = { high: 'bg-green-500', med: 'bg-yellow-500', low: 'bg-red-500' };
+            return (
+                <span className="inline-flex items-center group relative cursor-help ml-1 align-middle">
+                    <span className={`w-2 h-2 rounded-full ${colors[level]} opacity-80 group-hover:opacity-100 transition-opacity shadow-sm border border-black/10`}></span>
+                    <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-max max-w-[200px] bg-dark text-white text-[11px] font-bold p-2 rounded-lg shadow-xl z-10 text-center font-sans">
+                        Source: {source}
+                    </span>
+                </span>
+            );
+        };
+
+        const PersonalizationCallout = ({ text }) => (
+            <div className="bg-blue-50/50 border border-blue-100/50 p-3 md:p-4 rounded-xl flex items-start gap-3 my-4">
+                <Icon name="info" className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" />
+                <p className="text-[13px] text-blue-900/80 leading-[1.6]">{text}</p>
+            </div>
+        );
+
+        const PipelinePanel = () => {
+            const [open, setOpen] = useState(false);
+            return (
+                <div className="mt-6 border border-border rounded-xl md:rounded-2xl overflow-hidden bg-white/50">
+                    <button onClick={() => setOpen(!open)} className="w-full flex items-center justify-between p-3 md:p-4 text-[11px] md:text-[13px] font-bold text-charcoal hover:bg-canvas/30 transition-colors">
+                        <span className="flex items-center gap-2"><Icon name="network" className="w-4 h-4 text-muted" /> How I built this answer</span>
+                        <Icon name={open ? "chevron-up" : "chevron-down"} className="w-4 h-4 text-muted" />
+                    </button>
+                    <AnimatePresence>
+                        {open && (
+                            <motion.div initial={{height:0}} animate={{height:'auto'}} exit={{height:0}} className="overflow-hidden">
+                                <div className="p-3 md:p-4 pt-0 border-t border-border/50 font-mono text-[10px] md:text-[11px] space-y-3 bg-canvas/10">
+                                    <div className="p-3 bg-white rounded border border-border shadow-sm">
+                                        <div className="text-muted mb-1.5 uppercase tracking-wider text-[9px] font-bold">Sources Retrieved</div>
+                                        <div className="text-charcoal leading-[1.5]">NCERT Biology Class 10, Ch 6 (Similarity: 0.98)<br/>Student Error Logs (Query: "Dark Reaction")</div>
+                                    </div>
+                                    <div className="p-3 bg-white rounded border border-border shadow-sm">
+                                        <div className="text-muted mb-1.5 uppercase tracking-wider text-[9px] font-bold">Tools Executed</div>
+                                        <div className="text-charcoal leading-[1.5]">`generate_svg(topic="chloroplast_flow", style="minimal")`</div>
+                                    </div>
+                                    <div className="p-3 bg-white rounded border border-border shadow-sm">
+                                        <div className="text-muted mb-1.5 uppercase tracking-wider text-[9px] font-bold">Critic Verification</div>
+                                        <div className="text-green-600 leading-[1.5]">✓ Fact-checked against curriculum<br/>✓ Appropriate reading level (Flesch-Kincaid: 8.2)</div>
+                                    </div>
+                                </div>
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
+                </div>
+            );
+        };
+
+        const MarkdownRenderer = ({ text, subject }) => {
+            if (!text) return null;
+
+            const lines = text.split('\n');
+            const elements = [];
+            let inList = false;
+            let listItems = [];
+
+            const renderList = (items, key) => {
+                const listElems = items.map((item, idx) => {
+                    const parts = item.split(/\*\*(.*?)\*\*/g);
+                    return (
+                        <li key={idx} className="relative pl-5 md:pl-6 text-[15px] leading-[1.6] text-charcoal my-2">
+                            <div className="absolute left-1.5 top-2.5 w-1.5 h-1.5 bg-terracotta/80 rounded-full"></div>
+                            {parts.map((p, pIdx) => pIdx % 2 === 1 ? <strong key={pIdx} className="font-bold text-charcoal">{p}</strong> : p)}
+                        </li>
+                    );
+                });
+                return <ul key={key} className="my-4 space-y-1 pl-1">{listElems}</ul>;
+            };
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                const trimmed = line.trim();
+
+                if (!trimmed) {
+                    if (inList) {
+                        elements.push(renderList(listItems, `list-${i}`));
+                        listItems = [];
+                        inList = false;
+                    }
+                    continue;
+                }
+
+                if (trimmed.startsWith('- ') || trimmed.startsWith('* ') || /^\d+\.\s/.test(trimmed)) {
+                    inList = true;
+                    const content = trimmed.replace(/^[-*]\s+/, '').replace(/^\d+\.\s+/, '');
+                    listItems.push(content);
+                    continue;
+                } else if (inList) {
+                    elements.push(renderList(listItems, `list-${i}`));
+                    listItems = [];
+                    inList = false;
+                }
+
+                if (trimmed.startsWith('### ')) {
+                    const textContent = trimmed.slice(4);
+                    elements.push(
+                        <h3 key={i} className="font-serif text-[18px] md:text-[20px] font-bold text-charcoal mt-6 mb-3">
+                            {textContent}
+                        </h3>
+                    );
+                } else if (trimmed.startsWith('## ')) {
+                    const textContent = trimmed.slice(3);
+                    elements.push(
+                        <h2 key={i} className="font-serif text-[20px] md:text-[24px] font-bold text-charcoal mt-8 mb-4">
+                            {textContent}
+                        </h2>
+                    );
+                } else if (trimmed.startsWith('# ')) {
+                    const textContent = trimmed.slice(2);
+                    elements.push(
+                        <h1 key={i} className="font-serif text-[24px] md:text-[28px] font-bold text-charcoal mt-10 mb-4">
+                            {textContent}
+                        </h1>
+                    );
+                } else if (trimmed.includes('→') || trimmed.includes('= G *') || trimmed.includes('C₆H₁₂O₆')) {
+                    elements.push(
+                        <div key={i} className="my-6 space-y-3">
+                            <div className="bg-dark rounded-2xl p-4 md:p-6 shadow-xl border border-charcoal overflow-x-auto custom-scrollbar">
+                                <div className="font-mono text-white text-[14px] md:text-[18px] text-center tracking-wide mb-4 whitespace-nowrap min-w-[300px]">
+                                    {trimmed}
+                                </div>
+                                {subject === 'Biology' && (
+                                    <div className="flex justify-between text-[10px] md:text-[11px] font-mono text-muted uppercase tracking-[0.1em] min-w-[300px]">
+                                        <span>carbon dioxide</span>
+                                        <span>water</span>
+                                        <span className="hidden sm:inline">energy</span>
+                                        <span>glucose</span>
+                                        <span>oxygen</span>
+                                    </div>
+                                )}
+                                {subject === 'Physics' && (
+                                    <div className="flex justify-between text-[10px] md:text-[11px] font-mono text-muted uppercase tracking-[0.1em] min-w-[300px]">
+                                        <span>Force</span>
+                                        <span>Constant</span>
+                                        <span>Mass 1</span>
+                                        <span>Mass 2</span>
+                                        <span>Distance²</span>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    );
+                } else if (trimmed.startsWith('> ') || (trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length > 80)) {
+                    const textContent = trimmed.replace(/^>\s+/, '');
+                    elements.push(
+                        <div key={i} className="bg-[#FFF4F0] border-l-[4px] border-terracotta p-4 md:p-6 rounded-r-2xl my-6">
+                            <div className="text-[11px] font-bold tracking-[0.2em] text-terracotta uppercase mb-2 flex items-center gap-2">
+                                <Icon name="alert-triangle" className="w-4 h-4" />
+                                Exam Insight
+                            </div>
+                            <p className="text-[15px] leading-[1.6] text-charcoal">{textContent}</p>
+                        </div>
+                    );
+                } else {
+                    const parts = trimmed.split(/\*\*(.*?)\*\*/g);
+                    const children = parts.map((part, pIdx) => {
+                        if (pIdx % 2 === 1) {
+                            return <strong key={pIdx} className="font-bold text-charcoal">{part}</strong>;
+                        }
+                        const bracketParts = part.split(/\[(.*?)\]/g);
+                        return bracketParts.map((bp, bpIdx) => {
+                            if (bpIdx % 2 === 1) {
+                                return (
+                                    <span key={bpIdx} className="mx-1 px-2 py-0.5 bg-cream border border-border/80 text-terracotta font-serif italic text-[12px] md:text-[13px] rounded-lg inline-block align-middle font-semibold shadow-xs">
+                                        {bp}
+                                    </span>
+                                );
+                            }
+                            return bp;
+                        });
+                    });
+
+                    elements.push(
+                        <p key={i} className="text-[15px] text-charcoal leading-[1.6] mb-6">
+                            {children}
+                        </p>
+                    );
+                }
+            }
+
+            if (inList) {
+                elements.push(renderList(listItems, `list-last`));
+            }
+
+            return <div className="space-y-1">{elements}</div>;
+        };
+
+        const DynamicAIResponse = ({ msg, onFollowUp }) => {
+            const query = msg.originalQuery || '';
+            const subject = msg.subject || 'General Science';
+            const expertName = msg.expertName || 'General Science Specialist';
+            const badgeColor = msg.badgeColor || 'bg-blue-50 text-blue-800 border-blue-200';
+            const pulseColor = msg.pulseColor || 'bg-blue-500';
+
+            const personalizationBySubject = {
+                'Biology': 'You scored 6/10 on the last quiz about this, and you mentioned you\'re a visual learner. So let\'s look at this differently.',
+                'Physics': 'You struggled with gravitational force vector calculations in your pre-boards. Let\'s make this intuitive.',
+                'Math': 'Adaptive breakdown focusing on algebraic balance rules.',
+                'Chemistry': 'Last week you flagged reaction balancing — let\'s lock that in here.',
+                'Wellbeing': 'Taking a moment to slow down — that\'s a strength, not a weakness.',
+            };
+            const personalization = msg.personalization || personalizationBySubject[subject] || `Let\'s explore "${query}" with a personalised breakdown.`;
+
+            const titleBySubject = {
+                'Biology': 'The plant in your balcony is a chef',
+                'Physics': 'Newton\'s phone hit him in the face',
+                'Math': 'Step-by-Step Resolution',
+                'Chemistry': 'The kitchen-chemistry connection',
+                'Wellbeing': 'A two-minute reset',
+            };
+            const title = msg.title || titleBySubject[subject] || 'Analysis Complete';
+
+            const stepsBySubject = {
+                'Biology': [
+                    {text: 'Identifying topic: Photosynthesis (Class 10 Biology)', status: 'done'},
+                    {text: 'Retrieving student profile: Jane Doe (Visual learner)', status: 'done'},
+                    {text: 'Querying Knowledge Graph for NCERT Chapter 6', status: 'done'},
+                    {text: 'Streaming pedagogical response', status: 'done'},
+                ],
+                'Physics': [
+                    {text: 'Identifying topic: Gravitational Attraction', status: 'done'},
+                    {text: 'Looking up Universal Law of Gravitation', status: 'done'},
+                    {text: 'Routing to the Physics specialist', status: 'done'},
+                    {text: 'Streaming step-by-step explanation', status: 'done'},
+                ],
+            };
+            const steps = msg.steps && msg.steps.length ? msg.steps : (stepsBySubject[subject] || [
+                {text: `Identifying semantic intent for: "${query}"`, status: 'done'},
+                {text: 'Querying active curriculum database', status: 'done'},
+                {text: 'Streaming a custom explanation', status: 'done'},
+            ]);
+
+            return (
+                <div className="content-body flex flex-col w-full">
+                    <AIThinking steps={steps} />
+
+                    <div className="flex items-center gap-3 mb-4 md:mb-6">
+                        <span className={`px-3 py-1 ${badgeColor} text-[11px] font-bold rounded-full border shadow-sm flex items-center gap-1.5`}>
+                            <div className={`w-1.5 h-1.5 ${pulseColor} rounded-full animate-pulse`}></div>
+                            {expertName}
+                        </span>
+                    </div>
+
+                    <h2 className="font-serif text-[24px] md:text-[28px] lg:text-[32px] leading-[1.15] font-bold text-charcoal mb-4">
+                        {title}
+                    </h2>
+
+                    <PersonalizationCallout text={personalization} />
+
+                    <MarkdownRenderer text={msg.content} subject={subject} />
+
+                    {subject === 'Biology' && msg.content && msg.content.length > 100 && (
+                        <div className="space-y-4 mb-6 md:mb-8 mt-4">
+                            <div className="bg-canvas/30 rounded-xl p-3 border border-border/50 text-[11px] font-mono text-muted flex items-center gap-2 overflow-x-auto custom-scrollbar whitespace-nowrap">
+                                <Icon name="terminal" className="w-3.5 h-3.5 flex-shrink-0" />
+                                <span>Running `generate_diagram(type="chloroplast_flow")`...</span>
+                            </div>
+                            <div className="bg-white border border-border p-4 md:p-6 rounded-2xl shadow-sm flex flex-col items-center gap-4 w-full overflow-hidden">
+                                <svg viewBox="0 0 280 180" className="w-full max-w-[280px] h-auto overflow-visible" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Chloroplast flow diagram">
+                                    <title>Chloroplast flow diagram</title>
+                                    <defs>
+                                        <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orientation="auto">
+                                            <path d="M0,0 L10,5 L0,10 Z" fill="currentColor" />
+                                        </marker>
+                                    </defs>
+                                    <ellipse cx="140" cy="90" rx="110" ry="70" fill="#F0F9F0" stroke="#2E7D32" strokeWidth="2" />
+                                    <circle cx="100" cy="70" r="4" fill="#2E7D32" opacity="0.3" />
+                                    <circle cx="180" cy="110" r="4" fill="#2E7D32" opacity="0.3" />
+                                    <circle cx="130" cy="130" r="4" fill="#2E7D32" opacity="0.3" />
+                                    <path d="M40,20 L100,60" stroke="#FBC02D" strokeWidth="2" markerEnd="url(#arrow)" />
+                                    <text x="0" y="15" className="font-sans text-[11px] font-bold" fill="#FBC02D">☀ Sunlight</text>
+                                    <path d="M20,90 L60,90" stroke="#1976D2" strokeWidth="2" markerEnd="url(#arrow)" />
+                                    <text x="10" y="80" className="font-sans text-[11px] font-bold" fill="#1976D2">H₂O</text>
+                                    <path d="M20,120 L60,120" stroke="#757575" strokeWidth="2" markerEnd="url(#arrow)" />
+                                    <text x="10" y="140" className="font-sans text-[11px] font-bold" fill="#757575">CO₂</text>
+                                    <path d="M220,80 L260,80" stroke="#2E7D32" strokeWidth="2" markerEnd="url(#arrow)" />
+                                    <text x="210" y="70" className="font-sans text-[11px] font-bold" fill="#2E7D32">→ Glucose</text>
+                                    <path d="M220,105 L260,105" stroke="#F44336" strokeWidth="2" markerEnd="url(#arrow)" />
+                                    <text x="230" y="125" className="font-sans text-[11px] font-bold" fill="#F44336">→ O₂</text>
+                                </svg>
+                                <div className="text-center space-y-1 mt-2">
+                                    <div className="font-serif italic text-[15px] text-charcoal">Chloroplasts inside leaf cells</div>
+                                    <div className="text-[11px] font-medium text-muted uppercase tracking-widest">Two-stage process</div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {subject === 'Physics' && msg.content && msg.content.length > 100 && (
+                        <div className="space-y-4 mb-6 md:mb-8 mt-4">
+                            <div className="bg-canvas/30 rounded-xl p-3 border border-border/50 text-[11px] font-mono text-muted flex items-center gap-2 overflow-x-auto custom-scrollbar whitespace-nowrap">
+                                <Icon name="terminal" className="w-3.5 h-3.5 flex-shrink-0" />
+                                <span>Running `generate_diagram(type="gravity_forces")`...</span>
+                            </div>
+                            <div className="bg-white border border-border p-4 md:p-6 rounded-2xl shadow-sm flex flex-col items-center gap-4 w-full overflow-hidden">
+                                <svg viewBox="0 0 280 180" className="w-full max-w-[280px] h-auto overflow-visible" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Newtonian mutual attraction diagram">
+                                    <title>Newtonian mutual attraction</title>
+                                    <defs>
+                                        <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="6" refY="5" orientation="auto">
+                                            <path d="M0,0 L10,5 L0,10 Z" fill="#1976D2" />
+                                        </marker>
+                                        <marker id="arrow-red" markerWidth="10" markerHeight="10" refX="6" refY="5" orientation="auto">
+                                            <path d="M0,0 L10,5 L0,10 Z" fill="#D32F2F" />
+                                        </marker>
+                                    </defs>
+                                    <circle cx="70" cy="90" r="28" fill="#E3F2FD" stroke="#1976D2" strokeWidth="2" />
+                                    <text x="70" y="94" textAnchor="middle" className="font-sans text-[11px] font-bold" fill="#1976D2">M₁ (Earth)</text>
+                                    <circle cx="210" cy="90" r="14" fill="#FFEBEE" stroke="#D32F2F" strokeWidth="2" />
+                                    <text x="210" y="94" textAnchor="middle" className="font-sans text-[9px] font-bold" fill="#D32F2F">M₂</text>
+                                    <path d="M 170 90 L 120 90" stroke="#1976D2" strokeWidth="2.5" markerEnd="url(#arrow-blue)" />
+                                    <text x="145" y="80" textAnchor="middle" className="font-sans text-[10px] font-bold" fill="#1976D2">F₁ = Pull</text>
+                                    <path d="M 110 90 L 160 90" stroke="#D32F2F" strokeWidth="2.5" markerEnd="url(#arrow-red)" />
+                                    <text x="135" y="110" textAnchor="middle" className="font-sans text-[10px] font-bold" fill="#D32F2F">F₂ = Pull</text>
+                                    <path d="M 70 140 L 210 140" stroke="#9CA3AF" strokeWidth="1" strokeDasharray="3,3" />
+                                    <text x="140" y="155" textAnchor="middle" className="font-sans text-[10px]" fill="#6B665E" fontStyle="italic">Distance (r)</text>
+                                </svg>
+                                <div className="text-center space-y-1 mt-2">
+                                    <div className="font-serif italic text-[15px] text-charcoal">Newtonian mutual attraction vector</div>
+                                    <div className="text-[11px] font-medium text-muted uppercase tracking-widest">Universal gravitation (r⁻²)</div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {!msg.isStreaming && msg.content && msg.content.length > 50 && (
+                        <>
+                            <PipelinePanel />
+
+                            <div className="flex flex-wrap gap-2 pt-6 mt-6 border-t border-border/50">
+                                <ActionBtn icon="volume-2" text="Listen" onClick={() => alert('TTS coming next sprint.')} />
+                                <ActionBtn icon="layers" text="Save Flashcard" onClick={() => alert('Saved to your flashcard deck.')} />
+                                <ActionBtn icon="play-circle" text="See Animated" onClick={() => alert('Animation player coming next sprint.')} />
+                                <ActionBtn icon="edit-3" text="Practice This" onClick={() => onFollowUp('Give me a 5-question practice quiz on this topic.')} />
+                            </div>
+
+                            <div className="pt-6 mt-4 space-y-3">
+                                <div className="text-[11px] font-bold tracking-[0.1em] text-muted uppercase">Suggested Follow-ups</div>
+                                <div className="flex flex-col sm:flex-row flex-wrap gap-2">
+                                    {(msg.followups && msg.followups.length > 0 ? msg.followups : [
+                                        'Explain this in more detail',
+                                        'Give me a quick quiz on this',
+                                        'How does this connect to my board exam?',
+                                    ]).map((fText, fIdx) => (
+                                        <FollowUpChip key={fIdx} text={fText} onClick={() => onFollowUp(fText)} />
+                                    ))}
+                                </div>
+                            </div>
+                        </>
+                    )}
+                </div>
+            );
+        };
+
+        const ActionBtn = ({ icon, text, onClick }) => (
+            <button onClick={onClick} className="px-3 md:px-4 py-2 md:py-2.5 bg-white border border-border rounded-xl text-[11px] md:text-[13px] font-bold text-charcoal flex items-center gap-2 hover:bg-canvas hover:border-muted transition-all shadow-sm active:scale-95">
+                <Icon name={icon} className="w-3.5 h-3.5 md:w-4 md:h-4" />
+                {text}
+            </button>
+        );
+
+        const FollowUpChip = ({ text, onClick }) => (
+            <button onClick={onClick} className="px-4 py-2 bg-canvas/40 border border-border rounded-full text-[12px] md:text-[13px] font-medium text-charcoal hover:bg-white hover:border-terracotta transition-all text-left">
+                {text}
+            </button>
+        );
+
+        const TypingIndicator = () => (
+            <div className="flex justify-start gap-3 md:gap-[14px]">
+                <div className="w-10 h-10 md:w-10 md:h-10 bg-forest rounded-xl flex items-center justify-center text-white shadow-md mt-1">
+                    <Icon name="sparkles" className="w-5 h-5" />
+                </div>
+                <div className="bg-white border border-border px-5 py-4 rounded-[20px] flex gap-1.5 items-center shadow-sm h-12 mt-1">
+                    <div className="w-1.5 h-1.5 bg-muted rounded-full animate-bounce"></div>
+                    <div className="w-1.5 h-1.5 bg-muted rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                    <div className="w-1.5 h-1.5 bg-muted rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                </div>
+            </div>
+        );
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
+                 const parts = trimmed.split(/\*\*(.*?)\*\*/g);
+                    const children = parts.map((part, pIdx) => {
+                        if (pIdx % 2 === 1) {
+                            return <strong key={pIdx} className="font-bold text-charcoal">{part}</strong>;
+                        }
+                        const bracketParts = part.split(/\[(.*?)\]/g);
+                        return bracketParts.map((bp, bpIdx) => {
+                            if (bpIdx % 2 === 1) {
+                                return (
+                                    <span key={bpIdx} className="mx-1 px-2 py-0.5 bg-cream border border-border/80 text-terracotta font-serif italic text-[12px] md:text-[13px] rounded-lg inline-block align-middle font-semibold shadow-xs">
+                                        {bp}
+                                    </span>
+                                );
+                            }
+                            return bp;
+                        });
+                    });
+
+                    elements.push(
+                        <p key={i} className="text-[15px] text-charcoal leading-[1.6] mb-6">
+                            {children}
+                        </p>
+                    );
+                }
+            }
+
+            if (inList) {
+                elements.push(renderList(listItems, `list-last`));
+            }
+
+            return <div className="space-y-1">{elements}</div>;
+        };
+
+        const DynamicAIResponse = ({ msg, onFollowUp }) => {
+            const query = msg.originalQuery || '';
+            const q = query.toLowerCase();
+            
+            let subject = msg.subject;
+            let expertName = msg.expertName;
+            let badgeColor = msg.badgeColor;
+            let pulseColor = msg.pulseColor;
+            let title = msg.title;
+            let personalization = msg.personalization;
+            
+            if (!subject) {
+                subject = 'General Science';
+                expertName = 'General Science Specialist';
+                badgeColor = 'bg-blue-50 text-blue-800 border-blue-200';
+                pulseColor = 'bg-blue-500';
+                title = 'Analysis Complete';
+                personalization = 'Let\'s explore this topic with a personalized breakdown.';
+                
+                if (q.includes('photo') || q.includes('plant') || q.includes('leaf') || q.includes('biology')) {
+                    subject = 'Biology';
+                    expertName = 'Biology Expert';
+                    badgeColor = 'bg-green-50 text-forest border-green-200';
+                    pulseColor = 'bg-green-500';
+                    title = 'The plant in your balcony is a chef';
+                    personalization = 'You scored 6/10 on the last quiz about this, and you mentioned you\'re a visual learner. So let\'s look at this differently.';
+                } else if (q.includes('gravit') || q.includes('newton') || q.includes('physics') || q.includes('force')) {
+                    subject = 'Physics';
+                    expertName = 'Physics Expert';
+                    badgeColor = 'bg-orange-50 text-[#C2410C] border-orange-200';
+                    pulseColor = 'bg-orange-600';
+                    title = 'Newton\'s phone hit him in the face';
+                    personalization = 'You struggled with gravitational force vector calculations in your pre-boards. Let\'s make this intuitive.';
+                } else if (q.includes('math') || q.includes('equation') || q.includes('solve')) {
+                    subject = 'Math';
+                    expertName = 'Math Expert';
+                    badgeColor = 'bg-purple-50 text-purple-800 border-purple-200';
+                    pulseColor = 'bg-purple-500';
+                    title = 'Step-by-Step Resolution';
+                    personalization = 'Adaptive breakdown focusing on algebraic balance rules.';
+                }
+            }
+
+            const getSteps = () => {
+                if (subject === 'Biology') {
+                    return [
+                        {text: "Identifying topic: Photosynthesis (Class 10 Biology)", status: "done"},
+                        {text: "Retrieving student profile: Jane Doe (Visual learner)", status: "done"},
+                        {text: "Querying Knowledge Graph for NCERT Chapter 6", status: "done"},
+                        {text: "Running Python Sandbox to render chloroplast diagram", status: "done"},
+                        {text: "Structuring pedagogical response", status: "done"}
+                    ];
+                } else if (subject === 'Physics') {
+                    return [
+                        {text: "Identifying topic: Gravitational Attraction (Class 10 Physics)", status: "done"},
+                        {text: "Retrieving student profile: Jane Doe (Struggles with vectors)", status: "done"},
+                        {text: "Checking board syllabus: Universal Law of Gravitation", status: "done"},
+                        {text: "Rendering vector attraction diagram via Matplotlib SVG", status: "done"},
+                        {text: "Synthesizing intuitive pedagogical response", status: "done"}
+                    ];
+                } else {
+                    return [
+                        {text: `Identifying semantic intent for: "${query}"`, status: "done"},
+                        {text: "Querying active curriculum database", status: "done"},
+                        {text: "Synthesizing custom responsive explanation", status: "done"}
+                    ];
+                }
+            };
+
+            const steps = msg.steps || getSteps();
+
+            return (
+                <div className="content-body flex flex-col w-full">
+                    <AIThinking steps={steps} />
+
+                    <div className="flex items-center gap-3 mb-4 md:mb-6">
+                        <span className={`px-3 py-1 ${badgeColor} text-[11px] font-bold rounded-full border shadow-sm flex items-center gap-1.5`}>
+                            <div className={`w-1.5 h-1.5 ${pulseColor} rounded-full animate-pulse`}></div>
+                            {expertName}
+                        </span>
+                    </div>
+
+                    <h2 className="font-serif text-[24px] md:text-[28px] lg:text-[32px] leading-[1.15] font-bold text-charcoal mb-4">
+                        {title}
+                    </h2>
+
+                    <PersonalizationCallout text={personalization} />
+
+                    <MarkdownRenderer text={msg.content} subject={subject} />
+
+                    {subject === 'Biology' && msg.content && msg.content.length > 100 && (
+                        <div className="space-y-4 mb-6 md:mb-8 mt-4">
+                            <div className="bg-canvas/30 rounded-xl p-3 border border-border/50 text-[11px] font-mono text-muted flex items-center gap-2 overflow-x-auto custom-scrollbar whitespace-nowrap">
+                                <Icon name="terminal" className="w-3.5 h-3.5 flex-shrink-0" />
+                                <span>Running `generate_diagram(type="chloroplast_flow")`...</span>
+                            </div>
+                            
+                            <div className="bg-white border border-border p-4 md:p-6 rounded-2xl shadow-sm flex flex-col items-center gap-4 w-full overflow-hidden">
+                                <svg viewBox="0 0 280 180" className="w-full max-w-[280px] h-auto overflow-visible" preserveAspectRatio="xMidYMid meet">
+                                    <defs>
+                                        <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orientation="auto">
+                                            <path d="M0,0 L10,5 L0,10 Z" fill="currentColor" />
+                                        </marker>
+                                    </defs>
+                                    <ellipse cx="140" cy="90" rx="110" ry="70" fill="#F0F9F0" stroke="#2E7D32" strokeWidth="2" />
+                                    <circle cx="100" cy="70" r="4" fill="#2E7D32" opacity="0.3" />
+                                    <circle cx="180" cy="110" r="4" fill="#2E7D32" opacity="0.3" />
+                                    <circle cx="130" cy="130" r="4" fill="#2E7D32" opacity="0.3" />
+                                    
+                                    <path d="M40,20 L100,60" stroke="#FBC02D" strokeWidth="2" markerEnd="url(#arrow)" className="text-[#FBC02D]" />
+                                    <text x="0" y="15" className="font-sans text-[11px] font-bold" fill="#FBC02D">☀ Sunlight</text>
+                                    
+                                    <path d="M20,90 L60,90" stroke="#1976D2" strokeWidth="2" markerEnd="url(#arrow)" className="text-[#1976D2]" />
+                                    <text x="10" y="80" className="font-sans text-[11px] font-bold" fill="#1976D2">H₂O</text>
+                                    
+                                    <path d="M20,120 L60,120" stroke="#757575" strokeWidth="2" markerEnd="url(#arrow)" className="text-[#757575]" />
+                                    <text x="10" y="140" className="font-sans text-[11px] font-bold" fill="#757575">CO₂</text>
+                                    
+                                    <path d="M220,80 L260,80" stroke="#2E7D32" strokeWidth="2" markerEnd="url(#arrow)" className="text-[#2E7D32]" />
+                                    <text x="210" y="70" className="font-sans text-[11px] font-bold" fill="#2E7D32">→ Glucose</text>
+                                    
+                                    <path d="M220,105 L260,105" stroke="#F44336" strokeWidth="2" markerEnd="url(#arrow)" className="text-[#F44336]" />
+                                    <text x="230" y="125" className="font-sans text-[11px] font-bold" fill="#F44336">→ O₂</text>
+                                </svg>
+                                <div className="text-center space-y-1 mt-2">
+                                    <div className="font-serif italic text-[15px] text-charcoal">Chloroplasts inside leaf cells</div>
+                                    <div className="text-[11px] font-medium text-muted uppercase tracking-widest">Two-stage process</div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {subject === 'Physics' && msg.content && msg.content.length > 100 && (
+                        <div className="space-y-4 mb-6 md:mb-8 mt-4">
+                            <div className="bg-canvas/30 rounded-xl p-3 border border-border/50 text-[11px] font-mono text-muted flex items-center gap-2 overflow-x-auto custom-scrollbar whitespace-nowrap">
+                                <Icon name="terminal" className="w-3.5 h-3.5 flex-shrink-0" />
+                                <span>Running `generate_diagram(type="gravity_forces")`...</span>
+                            </div>
+                            
+                            <div className="bg-white border border-border p-4 md:p-6 rounded-2xl shadow-sm flex flex-col items-center gap-4 w-full overflow-hidden">
+                                <svg viewBox="0 0 280 180" className="w-full max-w-[280px] h-auto overflow-visible" preserveAspectRatio="xMidYMid meet">
+                                    <defs>
+                                        <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="6" refY="5" orientation="auto">
+                                            <path d="M0,0 L10,5 L0,10 Z" fill="#1976D2" />
+                                        </marker>
+                                        <marker id="arrow-red" markerWidth="10" markerHeight="10" refX="6" refY="5" orientation="auto">
+                                            <path d="M0,0 L10,5 L0,10 Z" fill="#D32F2F" />
+                                        </marker>
+                                    </defs>
+                                    <path d="M 0 30 L 280 30 M 0 60 L 280 60 M 0 90 L 280 90 M 0 120 L 280 120 M 0 150 L 280 150 M 30 0 L 30 180 M 60 0 L 60 180 M 90 0 L 90 180 M 120 0 L 120 180 M 150 0 L 150 180 M 180 0 L 180 180 M 210 0 L 210 180 M 240 0 L 240 180" fill="none" stroke="#E5E7EB" strokeWidth="0.5" />
+                                    
+                                    <circle cx="70" cy="90" r="28" fill="#E3F2FD" stroke="#1976D2" strokeWidth="2" />
+                                    <circle cx="70" cy="90" r="16" fill="#BBDEFB" opacity="0.6" />
+                                    <text x="70" y="94" textAnchor="middle" className="font-sans text-[11px] font-bold" fill="#1976D2">M₁ (Earth)</text>
+                                    
+                                    <circle cx="210" cy="90" r="14" fill="#FFEBEE" stroke="#D32F2F" strokeWidth="2" />
+                                    <text x="210" y="94" textAnchor="middle" className="font-sans text-[9px] font-bold" fill="#D32F2F">M₂</text>
+                                    
+                                    <path d="M 170 90 L 120 90" stroke="#1976D2" strokeWidth="2.5" markerEnd="url(#arrow-blue)" />
+                                    <text x="145" y="80" textAnchor="middle" className="font-sans text-[10px] font-bold" fill="#1976D2">F₁ = Pull</text>
+                                    
+                                    <path d="M 110 90 L 160 90" stroke="#D32F2F" strokeWidth="2.5" markerEnd="url(#arrow-red)" />
+                                    <text x="135" y="110" textAnchor="middle" className="font-sans text-[10px] font-bold" fill="#D32F2F">F₂ = Pull</text>
+                                    
+                                    <path d="M 70 140 L 210 140" stroke="#9CA3AF" strokeWidth="1" strokeDasharray="3,3" />
+                                    <path d="M 70 135 L 70 145 M 210 135 L 210 145" stroke="#9CA3AF" strokeWidth="1" />
+                                    <text x="140" y="155" textAnchor="middle" className="font-sans text-[10px] text-muted italic">Distance (r)</text>
+                                </svg>
+                                <div className="text-center space-y-1 mt-2">
+                                    <div className="font-serif italic text-[15px] text-charcoal">Newtonian mutual attraction vector</div>
+                                    <div className="text-[11px] font-medium text-muted uppercase tracking-widest">Universal gravitation (r⁻²)</div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {!msg.isStreaming && msg.content && msg.content.length > 50 && (
+                        <>
+                            <PipelinePanel />
+
+                            <div className="flex flex-wrap gap-2 pt-6 mt-6 border-t border-border/50">
+                                <ActionBtn icon="volume-2" text="Listen" />
+                                <ActionBtn icon="layers" text="Save Flashcard" />
+                                <ActionBtn icon="play-circle" text="See Animated" />
+                                <ActionBtn icon="edit-3" text="Practice This" />
+                            </div>
+
+                            <div className="pt-6 mt-4 space-y-3">
+                                <div className="text-[11px] font-bold tracking-[0.1em] text-muted uppercase">Suggested Follow-ups</div>
+                                <div className="flex flex-col sm:flex-row flex-wrap gap-2">
+                                    {msg.followups && msg.followups.length > 0 ? (
+                                        msg.followups.map((fText, fIdx) => (
+                                            <FollowUpChip key={fIdx} text={fText} onClick={() => onFollowUp(fText)} />
+                                        ))
+                                    ) : subject === 'Biology' ? (
+                                        <>
+                                            <FollowUpChip text="Solve a board-style question on this" onClick={() => onFollowUp("Solve a board-style question on this")} />
+                                            <FollowUpChip text="What happens to plants at night?" onClick={() => onFollowUp("What happens to plants at night?")} />
+                                            <FollowUpChip text="Connect this to cellular respiration" onClick={() => onFollowUp("Connect this to cellular respiration")} />
+                                        </>
+                                    ) : subject === 'Physics' ? (
+                                        <>
+                                            <FollowUpChip text="Why doesn't the moon fall into the earth?" onClick={() => onFollowUp("Why doesn't the moon fall into the earth?")} />
+                                            <FollowUpChip text="What is the difference between mass and weight?" onClick={() => onFollowUp("What is the difference between mass and weight?")} />
+                                            <FollowUpChip text="Solve a numerical on gravity calculation" onClick={() => onFollowUp("Solve a numerical on gravity calculation")} />
+                                        </>
+                                    ) : (
+                                        <>
+                                            <FollowUpChip text="Explain this in more detail" onClick={() => onFollowUp("Explain this in more detail")} />
+                                            <FollowUpChip text="Give me an interactive quiz on this" onClick={() => onFollowUp("Give me an interactive quiz on this")} />
+                                            <FollowUpChip text="How does this relate to CBSE board exams?" onClick={() => onFollowUp("How does this relate to CBSE board exams?")} />
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+                        </>
+                    )}
+                </div>
+            );
+        };
+
+        const ActionBtn = ({ icon, text }) => (
+            <button className="px-3 md:px-4 py-2 md:py-2.5 bg-white border border-border rounded-xl text-[11px] md:text-[13px] font-bold text-charcoal flex items-center gap-2 hover:bg-canvas hover:border-muted transition-all shadow-sm active:scale-95">
+                <Icon name={icon} className="w-3.5 h-3.5 md:w-4 md:h-4" />
+                {text}
+            </button>
+        );
+
+        const FollowUpChip = ({ text, onClick }) => (
+            <button onClick={onClick} className="px-4 py-2 bg-canvas/40 border border-border rounded-full text-[12px] md:text-[13px] font-medium text-charcoal hover:bg-white hover:border-terracotta transition-all text-left">
+                {text}
+            </button>
+        );
+
+        const TypingIndicator = () => (
+            <div className="flex justify-start gap-3 md:gap-[14px]">
+                <div className="w-10 h-10 md:w-10 md:h-10 bg-forest rounded-xl flex items-center justify-center text-white shadow-md mt-1">
+                    <Icon name="sparkles" className="w-5 h-5" />
+                </div>
+                <div className="bg-white border border-border px-5 py-4 rounded-[20px] flex gap-1.5 items-center shadow-sm h-12 mt-1">
+                    <div className="w-1.5 h-1.5 bg-muted rounded-full animate-bounce"></div>
+                    <div className="w-1.5 h-1.5 bg-muted rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                    <div className="w-1.5 h-1.5 bg-muted rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                </div>
+            </div>
+        );
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

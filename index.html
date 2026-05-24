@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StudyMate AI | Your Academic Companion</title>
+    <meta name="description" content="StudyMate AI - The ML-powered chatbot designed exclusively for students. Get tutored, solve math, and plan your studies.">
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+    
+    <!-- Icons (Phosphor) -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    
+    <!-- Markdown Parser & Sanitizer -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
+    
+    <!-- Styles -->
+    <link rel="stylesheet" href="style.css?v=3">
+</head>
+<body>
+
+    <!-- Sidebar Overlay -->
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <!-- Collapsible Sidebar -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <h2 class="sidebar-title">Study Tools</h2>
+            <button class="close-btn" id="closeSidebar"><i class="ph ph-x"></i></button>
+        </div>
+        
+        <div class="sidebar-content">
+            <!-- Learning & Tutoring -->
+            <div class="feature-group">
+                <div class="group-label">Learning & Tutoring</div>
+                <div class="feature-item" data-prompt="I have a doubt about [topic]. Can you explain it in 3 different ways?">
+                    <div class="feature-icon"><i class="ph ph-chalkboard-teacher"></i></div>
+                    <div class="feature-info">
+                        <div class="feature-name">Conversational Tutor</div>
+                        <div class="feature-desc">Explain concepts in 3 distinct ways</div>
+                    </div>
+                </div>
+                <div class="feature-item" data-prompt="Solve this math problem step-by-step: ">
+                    <div class="feature-icon"><i class="ph ph-math-operations"></i></div>
+                    <div class="feature-info">
+                        <div class="feature-name">Math Solver</div>
+                        <div class="feature-desc">Step-by-step symbolic reasoning</div>
+                    </div>
+                </div>
+                <div class="feature-item" data-prompt="I'm uploading a photo of my question. [Please simulate OCR]">
+                    <div class="feature-icon"><i class="ph ph-camera"></i></div>
+                    <div class="feature-info">
+                        <div class="feature-name">Snap & Solve</div>
+                        <div class="feature-desc">OCR + VLM problem solving</div>
+                    </div>
+                </div>
+                <div class="feature-item" data-prompt="[Voice Input Simulation] My doubt is... ">
+                    <div class="feature-icon"><i class="ph ph-microphone-stage"></i></div>
+                    <div class="feature-info">
+                        <div class="feature-name">Voice Doubt Solver</div>
+                        <div class="feature-desc">Multilingual ASR doubt solving</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Study Tools -->
+            <div class="feature-group">
+                <div class="group-label">Study Tools</div>
+                <div class="feature-item" data-prompt="Summarize this document into key bullet points: ">
+                    <div class="feature-icon"><i class="ph ph-file-text"></i></div>
+                    <div class="feature-info">
+                        <div class="feature-name">Note Summarizer</div>
+                        <div class="feature-desc">BART-powered PDF summaries</div>
+                    </div>
+                </div>
+                <div class="feature-item" data-prompt="Generate revision flashcards for: ">
+                    <div class="feature-icon"><i class="ph ph-cards"></i></div>
+                    <div class="feature-info">
+                        <div class="feature-name">Flashcard Generator</div>
+                        <div class="feature-desc">Auto-generate SQuAD-based cards</div>
+                    </div>
+                </div>
+                <div class="feature-item" data-prompt="Start an adaptive quiz on: ">
+                    <div class="feature-icon"><i class="ph ph-exam"></i></div>
+                    <div class="feature-info">
+                        <div class="feature-name">Adaptive Quizzes</div>
+                        <div class="feature-desc">IRT-based difficulty tuning</div>
+                    </div>
+                </div>
+                <div class="feature-item" data-prompt="Help me review my weak topics using spaced repetition.">
+                    <div class="feature-icon"><i class="ph ph-brain"></i></div>
+                    <div class="feature-info">
+                        <div class="feature-name">Memory Coach</div>
+                        <div class="feature-desc">FSRS algorithm recall training</div>
+                    </div>
+                </div>
+                <div class="feature-item" data-prompt="Plan my study schedule for the next week.">
+                    <div class="feature-icon"><i class="ph ph-calendar"></i></div>
+                    <div class="feature-info">
+                        <div class="feature-name">Study Planner</div>
+                        <div class="feature-desc">LSTM-based personalized schedules</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Growth & Wellness -->
+            <div class="feature-group">
+                <div class="group-label">Growth & Wellness</div>
+                <div class="feature-item" data-prompt="I'm feeling a bit stressed about my studies.">
+                    <div class="feature-icon"><i class="ph ph-heartbeat"></i></div>
+                    <div class="feature-info">
+                        <div class="feature-name">Wellness Companion</div>
+                        <div class="feature-desc">Sentiment & emotion support</div>
+                    </div>
+                </div>
+                <div class="feature-item" data-prompt="Explore career paths based on my interest in: ">
+                    <div class="feature-icon"><i class="ph ph-compass"></i></div>
+                    <div class="feature-info">
+                        <div class="feature-name">Career Path Finder</div>
+                        <div class="feature-desc">K-Means career clustering</div>
+                    </div>
+                </div>
+                <div class="feature-item" data-prompt="Check this text for plagiarism: ">
+                    <div class="feature-icon"><i class="ph ph-shield-check"></i></div>
+                    <div class="feature-info">
+                        <div class="feature-name">Plagiarism Checker</div>
+                        <div class="feature-desc">S-BERT embedding similarity</div>
+                    </div>
+                </div>
+                <div class="feature-item" data-prompt="Generate citations for these sources: ">
+                    <div class="feature-icon"><i class="ph ph-quotes"></i></div>
+                    <div class="feature-info">
+                        <div class="feature-name">Citation Generator</div>
+                        <div class="feature-desc">NER-based APA/MLA formatting</div>
+                    </div>
+                </div>
+                <div class="feature-item" data-prompt="Find study buddies working on: ">
+                    <div class="feature-icon"><i class="ph ph-users-three"></i></div>
+                    <div class="feature-info">
+                        <div class="feature-name">Study Buddy Matcher</div>
+                        <div class="feature-desc">GNN-based peer matching</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="sidebar-footer">
+            <div class="user-avatar">JD</div>
+            <div class="user-details">
+                <div class="user-name">Jane Doe</div>
+                <span class="plan-tag">Free plan</span>
+            </div>
+            <button class="upgrade-btn">Upgrade</button>
+        </div>
+    </aside>
+
+    <!-- Main Container -->
+    <main class="main-container">
+        <!-- Header -->
+        <!-- Header: Force Horizontal Flex -->
+        <header class="header">
+            <div class="header-left">
+                <div class="menu-icon" id="menuIcon"><i class="ph ph-list"></i></div>
+                <div class="logo-area">
+                    <img src="logo.png" alt="S" class="logo-img" id="mainLogo">
+                    <span class="brand-name">StudyMate AI</span>
+                </div>
+                
+                <!-- Memory Strip: Pure Inline Spans -->
+                <div class="memory-strip" id="memoryStrip">
+                    <i class="ph-fill ph-brain"></i>
+                    <span>Knows you</span>
+                    <span class="memory-dot"></span>
+                    <span>Class 10 CBSE</span>
+                    <span class="memory-dot"></span>
+                    <span>14-day streak</span>
+                    <span class="memory-dot"></span>
+                    <span>Boards: 47 days</span>
+                </div>
+            </div>
+            
+            <div class="status-indicator">
+                <div class="status-dot"></div>
+                <span>Online</span>
+            </div>
+        </header>
+
+        <!-- Chat Wrapper -->
+        <div class="chat-main">
+            <div class="chat-history" id="chatHistory">
+                <!-- Welcome Message -->
+                <div class="welcome-screen" id="welcomeScreen">
+                    <h1>How can I help you today?</h1>
+                    <p>Your AI-powered companion for smarter learning, solving doubts, and managing your student life.</p>
+                    
+                    <div class="suggestion-chips">
+                        <button class="chip" onclick="sendSuggestion('Explain photosynthesis')">Explain photosynthesis</button>
+                        <button class="chip" onclick="sendSuggestion('Plan my finals')">Plan my finals</button>
+                        <button class="chip" onclick="sendSuggestion('Solve a quadratic equation')">Solve a quadratic</button>
+                        <button class="chip" onclick="sendSuggestion('I\'m feeling stressed')">I'm stressed</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Input Box -->
+            <div class="live-reasoning" id="liveReasoning">
+                <div class="reason-pulse"></div>
+                <span id="reasoningText">Reasoning...</span>
+            </div>
+            <div class="input-container">
+                <div class="input-box-wrapper">
+                    <div class="action-icons">
+                        <div class="reasoning-selector">
+                            <button class="reason-btn active" data-mode="quick">⚡ Quick</button>
+                            <button class="reason-btn" data-mode="deep">🧠 Deep</button>
+                        </div>
+                        <label for="fileInput" class="action-icon"><i class="ph ph-image"></i></label>
+                        <input type="file" id="fileInput" hidden accept="image/*">
+                        <div class="action-icon" id="micIcon"><i class="ph ph-microphone"></i></div>
+                    </div>
+                    <textarea class="input-field" id="userInput" placeholder="Ask anything about your studies..." rows="1"></textarea>
+                    <button class="send-btn" id="sendBtn"><i class="ph ph-paper-plane-right"></i></button>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Scripts -->
+    <script src="script.js"></script>
+</body>
+</html>
